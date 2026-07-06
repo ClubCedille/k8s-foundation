@@ -9,6 +9,7 @@ spec:
   project: k8s-foundation
   destination:
     server: https://kubernetes.default.svc
+    namespace: argocd
   source:
     repoURL: https://github.com/ClubCedille/k8s-foundation
     path: common

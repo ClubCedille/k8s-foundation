@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: rook-ceph-external
+  name: kf-rook-ceph-external
   namespace: argocd
 spec:
   goTemplate: true

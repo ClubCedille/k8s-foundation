@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: vault
+  name: kf-vault
   namespace: argocd
 spec:
   goTemplate: true

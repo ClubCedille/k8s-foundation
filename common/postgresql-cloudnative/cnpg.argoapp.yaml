@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: postgresql-cloudnative
+  name: kf-postgresql-cloudnative
   namespace: argocd
 spec:
   goTemplate: true

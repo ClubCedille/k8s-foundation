@@ -9,6 +9,11 @@ helmCharts:
     namespace: velero
     valuesFile: "../../helm/values.yaml"
     includeCRDs: true
+    # k8s-poc uses GarageHQ S3 (see patch.yaml), not the shared default
+    # Backblaze B2 secret every other cluster's velero.values.yaml points to.
+    valuesInline:
+      credentials:
+        existingSecret: velero-s3-credentials
 
 patches:
   - path: patch.yaml

@@ -26,3 +26,4 @@ un redémarrage de node, ou un incident ArgoCD.
 | Nouveau cluster : collision de noms ApplicationSet entre repos | [applicationset-cluster-selector-guardrail.md](applicationset-cluster-selector-guardrail.md) |
 | ArgoCD selfHeal annule un correctif appliqué à la main | [argocd-selfheal-reverts-manual-changes.md](argocd-selfheal-reverts-manual-changes.md) |
 | Pod (hubble-relay/hubble-ui...) : DNS/réseau cassés malgré un DaemonSet Cilium sain | [cilium-pod-missing-endpoint.md](cilium-pod-missing-endpoint.md) |
+| VaultStaticSecret 403/vault-config-operator qui plante en boucle | [vault-config-operator-bootstrap.md](vault-config-operator-bootstrap.md) |

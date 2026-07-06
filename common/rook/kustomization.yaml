@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+helmCharts:
+  - name: rook-ceph
+    repo: https://charts.rook.io/release
+    version: v1.20.1
+    releaseName: rook-ceph
+    namespace: rook-ceph
+    valuesInline:
+      crds:
+        enabled: true
+      ceph-csi-operator:
+        controllerManager:
+          manager:
+            env:
+              csiServiceAccountPrefix: "ceph-csi-"
+
+resources:
+  - ressources/cluster-external.yaml
+  - ressources/common-external.yaml
+  - ressources/csi-drivers.yaml
+  - ressources/csi-rbac.yaml
+  - ressources/objectstore-admin-secret.yaml
+  - ressources/objectstore-external.yaml
+  - ressources/storageclasses.yaml
+
+patches:
+  # The ceph-csi-operator subchart ServiceAccount has no namespace in its template,
+  # so ArgoCD would apply it to the destination namespace (rook-ceph-external).
+  # Force it into rook-ceph where the controller-manager Deployment expects it.
+  - patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: rook-ceph
+    target:
+      group: ""
+      version: v1
+      kind: ServiceAccount
+      name: ceph-csi
+      labelSelector: "helm.sh/chart=ceph-csi-operator-1.0.1"

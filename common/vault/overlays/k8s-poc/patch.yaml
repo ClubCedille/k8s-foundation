@@ -5,7 +5,11 @@
 #
 # Pre-requisites:
 #   1. Create bucket "vault-k8s-poc" on Ceph RGW (via radosgw-admin or Rook OBC)
-#   2. Push RGW credentials to Vault kv-system/default_passwords/rgw-vault-k8s-poc
+#   2. Create Secret "rgw-vault-k8s-poc" in the vault namespace with keys
+#      access_key/secret_key for a dedicated RGW user scoped to that bucket
+#      (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY below are sourced from it -
+#      can't come from Vault's own kv store, since Vault needs this to start
+#      at all)
 #   3. Push GCP KMS service account JSON to vault-config secret (or use workload identity)
 apiVersion: v1
 kind: ConfigMap
@@ -34,7 +38,34 @@ data:
       region                 = "default"
       s3_force_path_style    = true
       disable_ssl            = true
-      access_key             = "${RGW_ACCESS_KEY}"
-      secret_key             = "${RGW_SECRET_KEY}"
+      # access_key/secret_key deliberately omitted: the container's startup
+      # script only does fixed sed substitutions (HOST_IP, POD_IP, HOSTNAME,
+      # API_ADDR, TRANSIT_ADDR, RAFT_ADDR) - it doesn't expand arbitrary
+      # ${VAR} placeholders, so a custom "${RGW_ACCESS_KEY}" here would be
+      # sent to RGW as the literal credential string. Vault's S3 backend
+      # falls back to the AWS SDK's default credential chain (AWS_ACCESS_KEY_ID/
+      # AWS_SECRET_ACCESS_KEY env vars) when these keys are absent from the config.
     }
     disable_mlock = true
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  template:
+    spec:
+      containers:
+        - name: vault
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rgw-vault-k8s-poc
+                  key: access_key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rgw-vault-k8s-poc
+                  key: secret_key

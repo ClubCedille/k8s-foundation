@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: cert-manager
+  name: kf-cert-manager
   namespace: argocd
 spec:
   goTemplate: true

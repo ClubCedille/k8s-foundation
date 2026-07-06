@@ -1,0 +1,35 @@
+# CiliumLoadBalancerIPPool — public pool (replaces MetalLB public-ip)
+#
+# Public exposure model: OPNsense 1:1 NAT
+#   - Blocks here contain PRIVATE IPs from the k8s VLAN (e.g. 10.0.130.x/32)
+#   - OPNsense maps each public IP → the private Cilium LB IP via 1:1 NAT
+#   - DNS: public IP → OPNsense → NAT → Cilium LB private IP → k8s service
+#   - No public IPs in this pool; no extra routing needed inside the cluster
+#
+# Blocks are cluster-specific and must be patched per cluster overlay.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: public-pool
+spec:
+  blocks: []   # populated via cluster-specific overlay/patch
+---
+# CiliumLoadBalancerIPPool — internal pool (replaces MetalLB internal-ip)
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: internal-pool
+spec:
+  blocks: []   # populated via cluster-specific overlay/patch
+---
+# CiliumL2AnnouncementPolicy — announces LoadBalancer IPs via L2 (ARP/NDP)
+# Replaces MetalLB L2Advertisement.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: l2-announce-all
+spec:
+  loadBalancerIPs: true
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/os: linux

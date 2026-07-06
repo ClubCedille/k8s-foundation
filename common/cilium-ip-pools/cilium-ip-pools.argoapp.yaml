@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: rook-ceph-external
+  name: cilium-ip-pools
   namespace: argocd
 spec:
   goTemplate: true
@@ -13,20 +13,22 @@ spec:
             stack: k8s-foundation
   template:
     metadata:
-      name: "{{.name}}-rook"
+      name: "{{.name}}-cilium-ip-pools"
       namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "-80"
     spec:
-      destination:
-        namespace: rook-ceph-external
-        server: "{{.server}}"
       project: "{{.name}}"
+      destination:
+        server: "{{.server}}"
       source:
         repoURL: https://github.com/ClubCedille/k8s-foundation.git
-        path: common/rook/ressources
-        targetRevision: HEAD
+        path: common/cilium-ip-pools/overlays/{{.name}}
+        targetRevision: master
       syncPolicy:
         automated:
           selfHeal: true
           prune: true
         syncOptions:
           - CreateNamespace=true
+          - ServerSideApply=true

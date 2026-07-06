@@ -1,0 +1,46 @@
+# NOTE: on a new cluster, run common/cilium/bootstrap.sh by hand first —
+# ArgoCD needs a CNI to schedule its own pods, so it can't bootstrap Cilium
+# itself. Same chart/release name/values here, so ArgoCD's first sync adopts
+# the manually-installed release for ongoing drift tracking and upgrades.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cilium
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            stack: k8s-foundation
+  template:
+    metadata:
+      name: "{{.name}}-cilium"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "-100"
+    spec:
+      project: "{{.name}}"
+      destination:
+        server: "{{.server}}"
+        namespace: kube-system
+      sources:
+        - chart: cilium
+          repoURL: https://helm.cilium.io/
+          targetRevision: 1.17.3
+          helm:
+            releaseName: cilium
+            valueFiles:
+              - $values/common/cilium/helm/values.yaml
+        - repoURL: https://github.com/ClubCedille/k8s-foundation.git
+          targetRevision: master
+          ref: values
+      syncPolicy:
+        automated:
+          selfHeal: true
+          prune: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

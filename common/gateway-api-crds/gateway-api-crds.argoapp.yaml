@@ -1,34 +1,34 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: netdata
+  name: gateway-api-crds
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - clusters: {}
+    - clusters:
+        selector:
+          matchLabels:
+            stack: k8s-foundation
   template:
     metadata:
-      name: "{{.name}}-netdata"
+      name: "{{.name}}-gateway-api-crds"
       namespace: argocd
       annotations:
-        argocd.argoproj.io/sync-wave: "-70"
+        argocd.argoproj.io/sync-wave: "-200"
     spec:
-      destination:
-        namespace: netdata
-        server: "{{.server}}"
       project: "{{.name}}"
+      destination:
+        server: "{{.server}}"
       source:
-        repoURL: https://github.com/ClubCedille/k8s-base.git
-        targetRevision: HEAD
-        path: common/netdata
+        repoURL: https://github.com/kubernetes-sigs/gateway-api
+        path: config/crd/standard
+        targetRevision: v1.6.0
       syncPolicy:
         automated:
           selfHeal: true
           prune: true
         syncOptions:
           - CreateNamespace=true
-        managedNamespaceMetadata:
-          labels:
-            pod-security.kubernetes.io/enforce: privileged
+          - ServerSideApply=true

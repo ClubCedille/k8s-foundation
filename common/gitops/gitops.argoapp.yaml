@@ -7,7 +7,10 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - clusters: {}
+    - clusters:
+        selector:
+          matchLabels:
+            stack: k8s-foundation
   template:
     metadata:
       name: "gitops-{{.name}}"
@@ -15,7 +18,7 @@ spec:
       annotations:
         argocd.argoproj.io/sync-wave: "0"
     spec:
-      project: "k8s-shared"
+      project: "{{.name}}"
       destination:
         server: "https://kubernetes.default.svc"
         namespace: argocd

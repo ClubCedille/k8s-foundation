@@ -25,3 +25,4 @@ un redémarrage de node, ou un incident ArgoCD.
 | Velero : `FailedMount` secret introuvable malgré BSL correcte | [velero-credentials-split-reference.md](velero-credentials-split-reference.md) |
 | Nouveau cluster : collision de noms ApplicationSet entre repos | [applicationset-cluster-selector-guardrail.md](applicationset-cluster-selector-guardrail.md) |
 | ArgoCD selfHeal annule un correctif appliqué à la main | [argocd-selfheal-reverts-manual-changes.md](argocd-selfheal-reverts-manual-changes.md) |
+| Pod (hubble-relay/hubble-ui...) : DNS/réseau cassés malgré un DaemonSet Cilium sain | [cilium-pod-missing-endpoint.md](cilium-pod-missing-endpoint.md) |

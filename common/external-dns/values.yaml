@@ -115,7 +115,7 @@ sources:
   - crd
   - service
   - ingress
-  - contour-httpproxy
+  - gateway-httproute
 ## @param provider DNS provider where the DNS records will be created.
 ## Available providers are:
 ## - akamai, alibabacloud, aws, azure, azure-private-dns, civo, cloudflare, coredns, digitalocean, exoscale, google, linode, ns1, oci, ovh, pdns, pihole, rfc2136, scaleway, transip

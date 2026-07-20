@@ -32,6 +32,16 @@ spec:
               - $values/common/external-dns/values.yaml
             values: |
               txtOwnerId: "{{.name}}"
+              # etsmtl.club is managed by Cloudflare, not the OPNsense router's
+              # RFC2136 DNS server (common/external-dns/values.yaml's default,
+              # still used as-is by the other external-dns ApplicationSet on
+              # k8s-cedille-production-v2/k8s-cedille-sandbox for cedille.club).
+              # Override scoped to this ApplicationSet only.
+              provider: cloudflare
+              cloudflare:
+                secretName: "cloudflare-api-token"
+              domainFilters:
+                - etsmtl.club
         - repoURL: 'https://github.com/ClubCedille/k8s-foundation.git'
           targetRevision: master
           ref: values

@@ -41,7 +41,7 @@ metadata:
   namespace: storage-config
 spec:
   vaultAuthRef: storage-config-auth
-  type: kv-v2
+  type: kv-v1
   mount: kv-system
   path: default_passwords/garagehq
   destination:

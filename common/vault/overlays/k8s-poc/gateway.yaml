@@ -1,0 +1,45 @@
+# Gateway API Gateway consommé par le HTTPRoute de vault (httproute.yaml).
+# Jamais commité en git lors de la mise en place initiale de k8s-poc (créé
+# à la main puis perdu, laissant le GatewayClass "cilium" sans Gateway et le
+# HTTPRoute de vault sans status — ArgoCD restait Progressing indéfiniment).
+# Vault termine sa propre écoute en clair (tls_disable=1,
+# common/vault/base/helm/vault.values.yaml), donc TLS doit être terminé ici,
+# au niveau du Gateway/Envoy.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cilium-gateway
+  namespace: kube-system
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: vault-https
+      protocol: HTTPS
+      port: 443
+      hostname: vault.k8s-poc.etsmtl.club
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: vault-tls
+            namespace: vault
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Autorise le Gateway (namespace kube-system) à référencer le Secret TLS
+# vault-tls, qui vit dans le namespace vault (géré par cert-manager).
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: cilium-gateway-vault-tls
+  namespace: vault
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: kube-system
+  to:
+    - group: ""
+      kind: Secret
+      name: vault-tls

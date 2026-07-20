@@ -23,7 +23,7 @@ spec:
         server: "{{.server}}"
       source:
         repoURL: https://github.com/kubernetes-sigs/gateway-api
-        path: config/crd/standard
+        path: config/crd/experimental
         targetRevision: v1.2.1
       syncPolicy:
         automated:

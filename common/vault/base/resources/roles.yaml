@@ -3,6 +3,7 @@ kind: KubernetesAuthEngineRole
 metadata:
   name: config-admin
 spec:
+  audience: vault
   authentication:
     path: kubernetes
     role: config-admin
@@ -22,6 +23,7 @@ kind: KubernetesAuthEngineRole
 metadata:
   name: secret-writer
 spec:
+  audience: vault
   authentication:
     path: kubernetes
     role: config-admin
@@ -39,6 +41,7 @@ kind: KubernetesAuthEngineRole
 metadata:
   name: secret-reader
 spec:
+  audience: vault
   authentication:
     path: kubernetes
     role: config-admin

@@ -1,6 +1,6 @@
 # Investigation ouverte : login Vault kubernetes-auth échoue pour le namespace `storage-config` sur k8s-poc
 
-**Statut : cause probable identifiée le 2026-07-20 (voir "Mise à jour"), correctif préparé mais pas encore appliqué en cluster (bootstrap manuel requis).**
+**Statut : correctif appliqué et vérifié en cluster le 2026-07-20 (voir "Mise à jour" et "Bootstrap effectué").**
 **Cluster concerné : `k8s-poc` (Vault interne, pod `vault-0`, namespace `vault`).**
 **Impact concret : initialement `VaultStaticSecret/garagehq-credentials` (namespace `storage-config`) ; s'est révélé être une panne globale du login kubernetes-auth depuis le 2026-07-20 15:06Z (voir mise à jour).**
 
@@ -50,14 +50,61 @@ visible, faute de cache/état figé pour le masquer).
 (champ supporté par le CRD `kubernetesauthengineroles.redhatcop.redhat.io`).
 
 **Piège de déploiement** : `vault-config-operator` s'authentifie lui-même
-via le rôle `config-admin` — celui-là même qui est cassé. Une fois ce
-correctif mergé et synced par ArgoCD, l'opérateur restera probablement
+via le rôle `config-admin` — celui-là même qui est cassé. Comme prévu,
+une fois le correctif mergé et synced par ArgoCD, l'opérateur est resté
 incapable de l'appliquer tout seul (même blocage que la "Cause n°1" du
-runbook `docs/runbooks/vault-config-operator-bootstrap.md`). Il faudra
-vraisemblablement un bootstrap manuel avec le root token Vault pour
-réécrire `auth/kubernetes/role/config-admin` avec `bound_audiences=vault`
-directement, avant que l'operator ne puisse reconcilier le reste. Non fait
-faute d'accès au root token au moment de cette investigation.
+runbook `docs/runbooks/vault-config-operator-bootstrap.md`), confirmant
+qu'un bootstrap manuel avec le root token était nécessaire.
+
+## Bootstrap effectué le 2026-07-20 (avec le root token)
+
+1. `vault write auth/kubernetes/role/config-admin ... audience=vault` —
+   **erreur d'implémentation à noter** : le paramètre pour la méthode
+   kubernetes-auth s'appelle `audience` (singulier), pas `bound_audiences`
+   (ce dernier est spécifique à la méthode JWT/OIDC ; passé par erreur une
+   première fois, Vault l'a silencieusement ignoré avec un warning
+   `unrecognized parameters`).
+2. Même après correction du nom de paramètre, le login échouait encore en
+   403 générique. Un `vault audit enable file` temporaire a confirmé que le
+   rejet venait bien du plugin kubernetes-auth lui-même
+   (`policy_results.allowed:true` + `error:"permission denied"` sur la même
+   entrée) — pas de la couche policy ACL.
+3. Un `vault monitor -log-level=trace` ciblé sur une tentative de login a
+   révélé la cause exacte :
+   ```
+   login unauthorized: err="parse \"https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}/apis/...\": invalid port"
+   ```
+   Un rafraîchissement de `token_reviewer_jwt` (nécessaire car la valeur
+   figée depuis le bootstrap du 06/07 était probablement expirée) avait été
+   réécrit avec les variables d'env `$KUBERNETES_SERVICE_HOST`/`_PORT` **non
+   résolues**, à cause d'un guillemetage simple (`'...'`) empêchant leur
+   expansion dans le shell du pod. Corrigé en réécrivant
+   `auth/kubernetes/config` avec la valeur littérale
+   (`kubernetes_host=https://10.96.0.1:443`).
+4. Une fois `kubernetes_host` corrigé, le login `config-admin` a échoué
+   différemment : `invalid audience (aud) claim: audience claim does not
+   match any expected audience`. Cause : `vault-config-operator` s'auto-
+   authentifie avec le **JWT par défaut** de son pod (pas de volume de
+   token projeté avec audience custom dans son `Deployment`), donc son
+   `aud` claim ne contient jamais `vault`. Contrairement à `secret-reader`/
+   `secret-writer` (consommés par VSO, qui lui envoie bien `aud: vault`),
+   `config-admin` **ne doit pas** avoir de champ `audience` — retiré du
+   rôle en direct puis du fichier source
+   (`common/vault/base/resources/roles.yaml`, PR séparée de la précédente).
+5. Après ce dernier correctif et un `rollout restart` du
+   `vault-config-operator` (pour sortir du backoff accumulé), l'operator a
+   pu se reconnecter et reconcilier `secret-reader`/`secret-writer` avec
+   leur `audience: vault`.
+
+**Root cause finale retenue** : la conjonction de deux problèmes distincts,
+tous deux liés au redémarrage de `vault-0` en Vault v1.20.0 le 2026-07-20 à
+15:06Z — (a) un `token_reviewer_jwt` expiré/jamais rafraîchi depuis le
+bootstrap initial du 06/07, et (b) l'absence de champ `audience` sur les
+rôles `secret-reader`/`secret-writer` alors que Vault v1.20 semble déjà
+appliquer une validation d'audience plus stricte que ce que documente le
+message d'avertissement ("v1.21+ will require"). `config-admin`, lui,
+devait rester sans `audience` car son unique client (`vault-config-operator`)
+n'en fournit pas.
 
 ## Contexte
 

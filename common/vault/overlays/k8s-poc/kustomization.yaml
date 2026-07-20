@@ -5,6 +5,7 @@ resources:
   - ../../base
   - certificate.yaml
   - httproute.yaml
+  - gateway.yaml
 
 patches:
   - path: patch.yaml

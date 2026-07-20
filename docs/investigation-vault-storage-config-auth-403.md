@@ -1,7 +1,12 @@
 # Investigation ouverte : login Vault kubernetes-auth échoue pour le namespace `storage-config` sur k8s-poc
 
-**Statut : correctif appliqué et vérifié en cluster le 2026-07-20 (voir "Mise à jour" et "Bootstrap effectué").**
-**Cluster concerné : `k8s-poc` (Vault interne, pod `vault-0`, namespace `vault`).**
+**Statut : résolu et vérifié en cluster le 2026-07-20.** Cette investigation
+a fini par couvrir, en cascade, quatre incidents distincts sur `k8s-poc` :
+le login Vault kubernetes-auth (403 global), un `GatewayClass`/`Gateway`
+jamais fonctionnel, un `cilium-operator` cassé par un CRD orphelin, et
+`external-dns` en crashloop sur un mauvais provider DNS. Voir "Bootstrap
+effectué" et "Suite du 2026-07-20" plus bas pour le détail de chaque fix.
+**Cluster concerné : `k8s-poc`.**
 **Impact concret : initialement `VaultStaticSecret/garagehq-credentials` (namespace `storage-config`) ; s'est révélé être une panne globale du login kubernetes-auth depuis le 2026-07-20 15:06Z (voir mise à jour).**
 
 ## Mise à jour 2026-07-20 : ce n'est pas (que) `storage-config`
@@ -216,45 +221,177 @@ et en reproduisant manuellement le login avec un JWT frais généré via
    liée à la validation du JWT / TokenReview côté Vault), pas du moteur de
    policy ACL de Vault.
 
-## Hypothèse restante (non vérifiée)
+## Hypothèse restante (obsolète, gardée pour l'historique de la démarche)
 
-Le refus semble venir de l'appel TokenReview effectué **par Vault
-lui-même** (via son propre `token_reviewer_jwt`) vers l'API Kubernetes,
-d'une manière différente de l'appel manuel qui, lui, réussit. Pistes non
-explorées faute d'accès :
+À ce stade de l'investigation (avant la reprise du 2026-07-20 après-midi),
+l'hypothèse retenue était que le refus venait de l'appel TokenReview
+effectué **par Vault lui-même** (via son propre `token_reviewer_jwt`) vers
+l'API Kubernetes, d'une manière différente de l'appel manuel qui, lui,
+réussissait. C'était le bon instinct : la cause réelle, trouvée plus tard,
+est bien liée au `token_reviewer_jwt` (expiré) — voir "Bootstrap effectué"
+plus haut, point 3.
 
-- Logs Vault en niveau `trace` (le niveau actuel est `debug`, insuffisant
-  pour voir le détail exact de l'appel TokenReview émis par le plugin
-  kubernetes-auth).
-- Vérifier si le nom du namespace `storage-config` interagit mal avec un
-  cache interne du plugin (nom généré dynamiquement, collision de clé de
-  cache, etc.) — semble spécifique au *nom* du namespace K8s, pas au SA.
-- Comparer avec un test où l'on renomme temporairement (ou clone) le
-  namespace `storage-config` sous un autre nom pour voir si le problème
-  suit le nom ou la ressource.
-- Vérifier la configuration `disable_iss_validation`/`issuer` de
-  `auth/kubernetes/config` de plus près (actuellement
-  `disable_iss_validation: true`, `issuer: n/a`) — semble correct mais reste
-  la seule zone de config non testée isolément par élimination.
-
-## État actuel du cluster (à la fin de l'investigation)
+## État final du cluster
 
 - `common/garage/resources/garagehq-config.yaml` : `type: kv-v1` (corrigé,
-  commit à faire/vérifier dans ce repo).
+  mergé).
 - `kv-system/default_passwords/garagehq` : peuplé sur **k8s-poc** et
   **k8s-shared** (clé Garage `garagehq-credentials`,
   `GKde6595c456c1626f1264eaac`, générée via
   `ssh localadmin@10.0.21.50 garage key create garagehq-credentials`).
 - `VaultStaticSecret/garagehq-credentials` (namespace `storage-config`,
-  k8s-poc) : toujours en échec, bloqué par ce problème d'authentification.
+  k8s-poc) : **`SecretSynced=True`/`Healthy=True`/`Ready=True`** depuis
+  2026-07-20T19:13:05Z. Problème initial résolu.
 - Aucune ressource Vault de diagnostic laissée en place (audit device
   désactivé, entity/SA de test supprimés, tokens temporaires révoqués/expirés).
 
-## Prochaine étape suggérée
+## Suite du 2026-07-20 : ArgoCD Progressing sur l'app vault → trois incidents en cascade
 
-Passer Vault en `log_level = "trace"` temporairement (via le ConfigMap
-`vault-config` / `common/vault/base/helm/vault.values.yaml`,
-`server.standalone.config`), reproduire le login échoué pour
-`storage-config`, puis comparer trace-par-trace avec un login réussi
-(`rook-ceph-external`) pour repérer où le chemin diverge à l'intérieur du
-plugin kubernetes-auth.
+Une fois le login Vault réglé, l'app ArgoCD `k8s-poc-vault` restait bloquée
+en `Progressing` malgré des ressources individuellement saines. Cause :
+`HTTPRoute/vault` (namespace `vault`) n'avait jamais de `status.parents`
+rempli — en creusant, trois incidents distincts, tous liés à Gateway API,
+se sont révélés :
+
+### 1. CRDs Gateway API incompatibles avec Cilium
+
+`common/gateway-api-crds/gateway-api-crds.argoapp.yaml` épinglait les CRDs
+Gateway API en **v1.6.0**, alors que Cilium 1.17.3 (installé sur tous les
+clusters) ne supporte officiellement que **v1.2.0** ("Cilium supports
+Gateway API v1.2.0", doc Cilium 1.17). Résultat : `cilium-operator` ne
+reconnaissait jamais le schéma des CRDs et laissait
+`GatewayClass/cilium` bloqué en `Accepted=Unknown/Pending` indéfiniment
+(`status.conditions[0].lastTransitionTime: "1970-01-01T00:00:00Z"`, jamais
+mis à jour depuis sa création 14 jours plus tôt), **sans la moindre erreur
+explicite dans les logs**.
+
+**Fix** : downgrade à `v1.2.1` (PR #11), path `config/crd/standard`.
+
+### 2. Le `Gateway cilium-gateway` n'existait nulle part
+
+`common/vault/overlays/k8s-poc/httproute.yaml` référence un `Gateway`
+nommé `cilium-gateway` dans `kube-system` — mais cet objet n'existait ni
+dans le repo ni dans le cluster. Créé à la main lors du setup initial du
+06/07, jamais commité, perdu. Sans lui, aucun `HTTPRoute` ne peut jamais
+avoir de `status.parents`, quel que soit l'état du `GatewayClass`.
+
+**Fix** (toujours PR #11) : ajout de
+`common/vault/overlays/k8s-poc/gateway.yaml` — un `Gateway` avec listener
+HTTPS terminant TLS via le secret `vault-tls` existant (géré par
+cert-manager, DNS01/Cloudflare), plus un `ReferenceGrant` pour la
+référence cross-namespace (`Gateway` en `kube-system`, `Secret` en
+`vault`). Vault lui-même écoute en clair (`tls_disable = 1`,
+`common/vault/base/helm/vault.values.yaml`) : TLS doit être terminé au
+niveau du Gateway/Envoy.
+
+### 3. `cilium-operator` en CrashLoopBackOff après le downgrade des CRDs
+
+Après le downgrade v1.2.1, `cilium-operator` (`kube-system`) s'est mis à
+planter au démarrage :
+```
+TLSRoute CRD is installed, TLSRoute support is enabled
+error="failed to create gateway controller: failed to setup optional
+reconciler: no matches for kind \"TLSRoute\" in version
+\"gateway.networking.k8s.io/v1alpha2\""
+```
+Cause : le channel `standard` de Gateway API n'inclut **pas** `TLSRoute`
+(il vit dans le channel `experimental`). Un CRD `TLSRoute` résiduel de
+l'ancienne installation v1.6.0 traînait avec `v1alpha2: served=false`,
+faisant planter le controller Gateway API de Cilium au démarrage — Cilium
+l'exige au démarrage même sans usage direct. Confirmé contre la doc
+d'installation officielle Cilium 1.17 : leurs commandes appliquent le
+bundle `standard` PLUS le CRD `TLSRoute` du bundle `experimental`
+séparément.
+
+**Fix** (PR #12) : basculer `gateway-api-crds.argoapp.yaml` entièrement
+sur le path `config/crd/experimental` (sur-ensemble de `standard` :
+mêmes CRDs + `TLSRoute`, `TCPRoute`, `UDPRoute`, `BackendTLSPolicy`,
+`BackendLBPolicy`), au lieu de gérer deux sources séparées.
+
+**Piège annexe rencontré pendant le bootstrap live** : 3 des nouvelles
+CRDs (`tcproutes`, `udproutes`, `backendtlspolicies`) refusaient de se
+mettre à jour :
+```
+status.storedVersions[0]: Invalid value: "v1": missing from spec.versions;
+v1 was previously a storage version, and must remain in spec.versions
+until a storage migration ensures no data remains persisted in v1 and
+removes v1 from status.storedVersions
+```
+Aucune ressource de ces types n'existait (`kubectl get <kind> -A` → vide) :
+patché `status.storedVersions` en direct
+(`kubectl patch crd <name> --subresource=status --type=merge -p
+'{"status":{"storedVersions":["v1alphaX"]}}'`) pour débloquer la
+migration de schéma, sans perte de données. Rien à committer, c'est du
+bookkeeping serveur K8s, pas une divergence de manifeste.
+
+**État final vérifié** : `GatewayClass/cilium` `Accepted=True`,
+`Gateway/cilium-gateway` `Programmed=True` (adresse `10.0.130.200`),
+`HTTPRoute/vault` `Accepted=True`/`ResolvedRefs=True`, apps ArgoCD
+`k8s-poc-vault`/`k8s-poc-gateway-api-crds`/`k8s-poc-cilium` toutes
+`Synced/Healthy`.
+
+## Suite du 2026-07-20 (bis) : `external-dns` en CrashLoopBackOff
+
+Une fois le `HTTPRoute` de vault fonctionnel, `external-dns` a soudainement
+eu une vraie adresse à publier pour `vault.k8s-poc.etsmtl.club` — et s'est
+mis à planter :
+```
+level=error msg="RFC2136 create record failed: bad return code: SERVFAIL"
+level=fatal msg="Failed to do run once: RFC2136 had errors in one or more
+of its batches: [bad return code: SERVFAIL]"
+```
+
+**Ce n'est pas une régression causée par le fix Gateway** : `external-dns`
+sur `k8s-shared` affichait l'**exact même erreur depuis 14 jours (4085+
+restarts)**. Le problème préexistait, simplement invisible sur `k8s-poc`
+faute de `HTTPRoute` fonctionnel avant aujourd'hui.
+
+**Cause** : `provider: rfc2136` pointé sur `10.0.21.1:53530` — une IP du
+routeur OPNsense — pour les zones `etsmtl.club` **et** `cedille.club`.
+Confirmé par le propriétaire de l'infra : le routeur ne devrait pas faire
+autorité pour le sous-réseau de `k8s-poc`, et `etsmtl.club` est censé être
+géré par **Cloudflare**. Vérifié via l'API Cloudflare (avec le token déjà
+utilisé par cert-manager, `cloudflare-token-etsmtl`) : `etsmtl.club` y est
+bien présent, `cedille.club` n'y est pas.
+
+**Piège évité** : `common/external-dns/values.yaml` est **partagé** entre
+deux ApplicationSets — `kf-external-dns` (repo `k8s-foundation`, génère
+`k8s-poc`) et l'ApplicationSet legacy `external-dns` (repo **`k8s-base`**,
+génère `k8s-shared`, `k8s-cedille-production-v2`, `k8s-cedille-sandbox`).
+`k8s-cedille-production-v2` utilise activement `cedille.club` via ce même
+RFC2136 pour `vault.prodv2.cedille.club` (app ArgoCD `Healthy`, donc
+fonctionnel) — un changement global du fichier partagé aurait cassé la
+prod. Décision : **`k8s-poc` est la direction pour les futurs clusters
+k8s ; `k8s-base`/`k8s-shared` reste en l'état ("fonctionnel mais pas
+parfait"), traité séparément si besoin.**
+
+**Fix** (PR #13, scopé à `kf-external-dns` uniquement, via `values:` Helm
+inline dans `common/external-dns/external-dns.argoapp.yaml`) :
+`provider: cloudflare`, `domainFilters: [etsmtl.club]`,
+`cloudflare.secretName: cloudflare-api-token`. `common/external-dns/values.yaml`
+lui-même n'a **pas** été modifié.
+
+**Prérequis manuel** (secret contenant un credential réel, pas dans git) :
+```bash
+kubectl -n cert-manager get secret cloudflare-token-etsmtl -o jsonpath='{.data.token}' | base64 -d > /tmp/cf_token
+kubectl -n external-dns create secret generic cloudflare-api-token --from-file=cloudflare_api_token=/tmp/cf_token
+rm -f /tmp/cf_token
+```
+(clé `cloudflare_api_token` imposée par le chart bitnami/external-dns
+9.0.3, `templates/deployment.yaml` — différent de la clé `token` utilisée
+par le secret cert-manager d'origine). Exécuté sur `k8s-poc` et
+`k8s-shared` (`k8s-shared` en profite passivement même si son
+`provider` n'a pas été changé côté `k8s-base` — le secret ne sert à rien
+tant que ce repo séparé n'est pas mis à jour, laissé en place sans risque).
+
+**État final vérifié** : `k8s-poc-external-dns` `Synced/Healthy`, pod
+`Running`, plus de crashloop.
+
+## Récapitulatif des PRs (k8s-foundation)
+
+| PR | Fix |
+|---|---|
+| #10 | Retirer `audience: vault` de `config-admin` (seul `secret-reader`/`secret-writer` en ont besoin) |
+| #11 | Downgrade CRDs Gateway API v1.6.0→v1.2.1 (compat Cilium 1.17) + `Gateway cilium-gateway` manquant |
+| #12 | Channel `experimental` pour les CRDs (TLSRoute requis par Cilium au démarrage) |
+| #13 | `external-dns` → Cloudflare pour `etsmtl.club` sur `kf-external-dns` uniquement (k8s-poc), sans toucher au `k8s-base`/legacy dont dépend la prod |

@@ -3,7 +3,6 @@ kind: KubernetesAuthEngineRole
 metadata:
   name: config-admin
 spec:
-  audience: vault
   authentication:
     path: kubernetes
     role: config-admin
